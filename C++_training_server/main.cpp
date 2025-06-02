@@ -10,36 +10,39 @@ using namespace std;
 
 class client {
 public:
-	string name;
-	SOCKET socket;
+	char name[1024] = { 0 };
+	SOCKET socket = 0;
+	int ready = 0;//玩家是否准备，是为1，不是为0
 };
 
 class game {
 public:
 	client* client_ingame[2] = { NULL };
 	string roomnum;//房间号
-	int ready = 0;//战局是否准备（战局内存在两名玩家），是为1，不是为0
 	int state = 0;//战局是否开始，开始为1，未开始为0
 
 	//创建新战局
-	game(client cli1, string rmnum) {
-		client_ingame[0] = &cli1;
+	game(client* cli1, string rmnum) {
+		client_ingame[0] = cli1;
 		roomnum = rmnum;
 	}
 };
 
 vector<game> games;
+int gameschanged = 0;//当改变games大小时改为1，停止遍历并改为0
 
+//断开连接并将战局内存在的另一个人设置为player1，如果没有删除战局
 void player_quit(SOCKET client_socket) {
-	char buffer[1024];
+	cout << client_socket << " quit" << endl;
+	char buffer[1024] = {0};
 	//遍历战局
 	for (int games_indx = 0; games_indx < games.size(); games_indx++) {
 		//遍历战局内客户端
-		for (auto client : games[games_indx].client_ingame) {
+		for (int i = 0; i < 2;i++) {
 			//如果找到该客户端
-			if (client->socket == client_socket) {
+			if (games[games_indx].client_ingame[i]!=NULL && games[games_indx].client_ingame[i]->socket == client_socket) {
 				//设置战局内该客户端为空
-				client == NULL;
+				games[games_indx].client_ingame[i] = NULL;
 				//与该客户端断联
 				closesocket(client_socket);
 				//检查该战局内玩家数
@@ -47,14 +50,15 @@ void player_quit(SOCKET client_socket) {
 				if (games[games_indx].client_ingame[0] == NULL && games[games_indx].client_ingame[1] == NULL) {
 					//删除战局
 					games.erase(games.begin() + games_indx);
+					gameschanged = 1;
+					break;
 				}//若战局内有玩家
 				else {
 					//当前玩家在0号位
 					if (games[games_indx].client_ingame[0] != NULL) {
 						//向该玩家发送玩家2退出消息
 						send(games[games_indx].client_ingame[0]->socket, "player 2 quit", sizeof("player 2 quit"), 0);
-						//设置战局状态为未准备
-						games[games_indx].ready = 0;
+						break;
 					}//当前玩家在1号位
 					else if (games[games_indx].client_ingame[1] != NULL) {
 						//向该玩家发送玩家1退出消息
@@ -62,8 +66,7 @@ void player_quit(SOCKET client_socket) {
 						//将该玩家设置为0号位
 						games[games_indx].client_ingame[0] = games[games_indx].client_ingame[1];
 						games[games_indx].client_ingame[1] = NULL;
-						//设置战局状态为未准备
-						games[games_indx].ready = 0;
+						break;
 					}
 				}
 			}
@@ -78,17 +81,25 @@ DWORD WINAPI thread_func(LPVOID lpThreadParameter) {
 	SOCKET client_socket = *(SOCKET*)lpThreadParameter;
 	free(lpThreadParameter);
 
+	u_long mode = 0; // 设置为阻塞模式 非阻塞为1，阻塞为0
+	if (ioctlsocket(client_socket, FIONBIO, &mode) == SOCKET_ERROR) {
+		std::cerr << "ioctlsocket failed: " << WSAGetLastError() << std::endl;
+		closesocket(client_socket);
+		WSACleanup();
+		return -1;
+	}
+
 	//获取客户端玩家昵称与所创建或加入房间号
 	client client_login;
 	client_login.socket = client_socket;
-	char buffer[1024];
+	char buffer[1024] = { 0 };
 	if (recv(client_socket, buffer, 1024, 0) < 0) {
 		cerr << "no name received";
 		closesocket(client_socket);
 		return -1;
 	}
 	printf(buffer);
-	client_login.name = buffer;
+	strcpy(client_login.name, buffer);
 roomnuminput:
 	if (recv(client_socket, buffer, 1024, 0) < 0) {
 		cerr << "no roomnumber received";
@@ -107,11 +118,10 @@ roomnuminput:
 			//房间有1人，加入
 			if (games[games_indx].client_ingame[1] == NULL) {
 				cout << "加入房间 " << games[games_indx].roomnum << endl;
+				send(client_socket, "ready", sizeof("ready"), 0);
 				games[games_indx].client_ingame[1] = &client_login;
-				//房间加入两人，可以开始游戏,向两人发送ready信息
-				send(games[games_indx].client_ingame[0]->socket, "ready", sizeof("ready"), 0);
-				send(games[games_indx].client_ingame[1]->socket, "ready", sizeof("ready"), 0);
-				games[games_indx].ready = 1;
+				send(games[games_indx].client_ingame[1]->socket, games[games_indx].client_ingame[0]->name, sizeof(games[games_indx].client_ingame[0]->name), 0);
+				send(games[games_indx].client_ingame[0]->socket, games[games_indx].client_ingame[1]->name, sizeof(games[games_indx].client_ingame[1]->name), 0);
 				goto ready;
 			}//房间已满重新输入房间号
 			else{
@@ -125,12 +135,28 @@ roomnuminput:
 	//房间不存在
 	cout << "房间已创建" << endl;
 	send(client_socket, "create", sizeof("create"), 0);
-	games.emplace_back(client_login, num);
+	games.emplace_back(&client_login, num);
 
 ready:
-	//关闭连接
-	//closesocket(client_socket);
-
+	mode = 1; // 设置为非阻塞模式 非阻塞为1，阻塞为0
+	if (ioctlsocket(client_socket, FIONBIO, &mode) == SOCKET_ERROR) {
+		std::cerr << "ioctlsocket failed: " << WSAGetLastError() << std::endl;
+		closesocket(client_socket);
+		WSACleanup();
+		return -1;
+	}
+	while (1) {
+		//没数据返回-1，断开连接返回0，有数据返回数据大小
+		if (recv(client_socket, buffer, 1024, 0) > 0) {
+			if (strcmp(buffer, "back") == 0) {
+				player_quit(client_socket);
+				return 0;
+			}
+			else if(strcmp(buffer, "ready") == 0) {
+				client_login.ready = 1;
+			}
+		}
+	}
 	return 0;
 }
 
@@ -139,10 +165,19 @@ int main(){
 	WSADATA wsaData;
 	WSAStartup(MAKEWORD(2, 2), &wsaData);
 
-	/**///创建socket套接字 协议地址簇IPV4 TCP协议 保护方式0
-	SOCKET listen_socket = socket(AF_INET, SOCK_STREAM, 0);
+	/**///创建socket套接字 协议地址簇IPV4 TCP协议 保护方式非阻塞
+	SOCKET listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (INVALID_SOCKET == listen_socket) {
 		printf("create lisn_socket failed!!! errcode: %d\n", GetLastError());
+		return -1;
+	}
+
+	// 设置监听套接字为非阻塞模式
+	u_long mode = 1; // 非阻塞模式
+	if (ioctlsocket(listen_socket, FIONBIO, &mode) == SOCKET_ERROR) {
+		std::cerr << "ioctlsocket failed: " << WSAGetLastError() << std::endl;
+		closesocket(listen_socket);
+		WSACleanup();
 		return -1;
 	}
 
@@ -163,16 +198,46 @@ int main(){
 		return -1;
 	}
 
+	char buffer[1024] = { 0 };
 	//等待客户端连接
 	while(1){
-		SOCKET client_socket = accept(listen_socket, NULL, NULL);  //等待连接并返回客户端socket，在完成前不继续执行
-		if (INVALID_SOCKET == client_socket)continue;
+		SOCKET client_socket = accept(listen_socket, NULL, NULL);  //等待连接并返回客户端socket，非阻塞执行
+		if (INVALID_SOCKET != client_socket){
 
 		SOCKET* sockfd = (SOCKET*)malloc(sizeof(SOCKET));
 		*sockfd = client_socket;
 
 		//创建线程
 		CreateThread(NULL, 0, thread_func, sockfd, 0, NULL);
+        }
+		/*for (int games_indx = 0; games_indx < games.size(); games_indx++) {
+			//两人都准备的战局发送开始消息
+			if (gameschanged==0&&games[games_indx].client_ingame[0]->ready && games[games_indx].client_ingame[1]!=NULL&& games[games_indx].client_ingame[1]->ready) {
+				send(games[games_indx].client_ingame[0]->socket, "start", sizeof("strat"), 0);
+				send(games[games_indx].client_ingame[1]->socket, "start", sizeof("strat"), 0);
+				games[games_indx].state = 1;
+			}//如果有人胜出，向同战局内零一玩家发送失败信息
+			for (int i = 0; i < 2; i++) {
+				if (gameschanged == 0 && games[games_indx].client_ingame[i] != NULL) {
+					if (gameschanged == 0 && recv(games[games_indx].client_ingame[i]->socket, buffer, 1024, 0) > 0) {
+						if (strcmp(buffer, "win") == 0) {
+							if (gameschanged == 0 && games[games_indx].client_ingame[0] != games[games_indx].client_ingame[i]) {
+								send(games[games_indx].client_ingame[0]->socket, "lose", sizeof("lose"), 0);
+							}
+							else if (gameschanged == 0 && games[games_indx].client_ingame[1] != games[games_indx].client_ingame[i]) {
+								send(games[games_indx].client_ingame[1]->socket, "lose", sizeof("lose"), 0);
+							}
+							games[games_indx].client_ingame[0]->ready = 0;
+							games[games_indx].client_ingame[1]->ready = 0;
+							games[games_indx].state = 0;
+						}
+					}
+				}
+			}
+		}
+		if (gameschanged == 1) {
+			gameschanged = 0;
+		}*/
 	}
 	return 0;
 }
