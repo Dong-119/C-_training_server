@@ -19,7 +19,6 @@ class game {
 public:
 	client* client_ingame[2] = { NULL };
 	string roomnum;//房间号
-	int state = 0;//战局是否开始，开始为1，未开始为0
 
 	//创建新战局
 	game(client* cli1, string rmnum) {
@@ -238,6 +237,12 @@ int main(){
 		if (gameschanged == 1) {
 			gameschanged = 0;
 		}*/
+		for (auto game : games) {
+			if (game.client_ingame[0] != NULL && game.client_ingame[1] != NULL && game.client_ingame[0]->ready && game.client_ingame[0]->ready) {
+				send(game.client_ingame[0]->socket, "start", sizeof("start"), 0);
+				send(game.client_ingame[1]->socket, "start", sizeof("start"), 0);
+			}
+		}
 	}
 	return 0;
 }
