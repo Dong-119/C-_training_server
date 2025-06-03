@@ -8,11 +8,18 @@
 
 using namespace std;
 
+void player_quit(SOCKET client_socket);
+
 class client {
 public:
 	char name[1024] = { 0 };
 	SOCKET socket = 0;
-	int ready = 0;//玩家是否准备，是为1，不是为0
+	bool ready = 0;//玩家是否准备，是为1，不是为0
+	bool win = 0, lose = 0;//是否胜利或失败
+
+	~client() {
+		player_quit(socket);
+	}
 };
 
 class game {
@@ -154,6 +161,12 @@ ready:
 			else if(strcmp(buffer, "ready") == 0) {
 				client_login.ready = 1;
 			}
+			else if (strcmp(buffer, "win") == 0) {
+				client_login.win = 1;
+			}
+			else if (strcmp(buffer, "give up") == 0) {
+				client_login.lose = 1;
+			}
 		}
 	}
 	return 0;
@@ -202,45 +215,34 @@ int main(){
 	while(1){
 		SOCKET client_socket = accept(listen_socket, NULL, NULL);  //等待连接并返回客户端socket，非阻塞执行
 		if (INVALID_SOCKET != client_socket){
-
-		SOCKET* sockfd = (SOCKET*)malloc(sizeof(SOCKET));
-		*sockfd = client_socket;
-
-		//创建线程
-		CreateThread(NULL, 0, thread_func, sockfd, 0, NULL);
+		    SOCKET* sockfd = (SOCKET*)malloc(sizeof(SOCKET));
+		    *sockfd = client_socket;
+		    
+		    //创建线程
+		    CreateThread(NULL, 0, thread_func, sockfd, 0, NULL);
         }
-		/*for (int games_indx = 0; games_indx < games.size(); games_indx++) {
-			//两人都准备的战局发送开始消息
-			if (gameschanged==0&&games[games_indx].client_ingame[0]->ready && games[games_indx].client_ingame[1]!=NULL&& games[games_indx].client_ingame[1]->ready) {
-				send(games[games_indx].client_ingame[0]->socket, "start", sizeof("strat"), 0);
-				send(games[games_indx].client_ingame[1]->socket, "start", sizeof("strat"), 0);
-				games[games_indx].state = 1;
-			}//如果有人胜出，向同战局内零一玩家发送失败信息
-			for (int i = 0; i < 2; i++) {
-				if (gameschanged == 0 && games[games_indx].client_ingame[i] != NULL) {
-					if (gameschanged == 0 && recv(games[games_indx].client_ingame[i]->socket, buffer, 1024, 0) > 0) {
-						if (strcmp(buffer, "win") == 0) {
-							if (gameschanged == 0 && games[games_indx].client_ingame[0] != games[games_indx].client_ingame[i]) {
-								send(games[games_indx].client_ingame[0]->socket, "lose", sizeof("lose"), 0);
-							}
-							else if (gameschanged == 0 && games[games_indx].client_ingame[1] != games[games_indx].client_ingame[i]) {
-								send(games[games_indx].client_ingame[1]->socket, "lose", sizeof("lose"), 0);
-							}
-							games[games_indx].client_ingame[0]->ready = 0;
-							games[games_indx].client_ingame[1]->ready = 0;
-							games[games_indx].state = 0;
-						}
-					}
-				}
-			}
-		}
-		if (gameschanged == 1) {
-			gameschanged = 0;
-		}*/
+		//遍历战局
 		for (auto game : games) {
-			if (game.client_ingame[0] != NULL && game.client_ingame[1] != NULL && game.client_ingame[0]->ready && game.client_ingame[0]->ready) {
+			//双方都准备，发送开始游戏消息
+			if (game.client_ingame[0] != NULL && game.client_ingame[1] != NULL && game.client_ingame[0]->ready && game.client_ingame[1]->ready) {
 				send(game.client_ingame[0]->socket, "start", sizeof("start"), 0);
 				send(game.client_ingame[1]->socket, "start", sizeof("start"), 0);
+				game.client_ingame[0]->ready = 0;
+				game.client_ingame[1]->ready = 0;
+			}
+			//如果零号玩家认输或一号玩家胜利,向双方发送对应消息
+			if (game.client_ingame[0] != NULL && game.client_ingame[1] != NULL && (game.client_ingame[0]->lose || game.client_ingame[1]->win)) {
+				send(game.client_ingame[0]->socket, "lose", sizeof("lose"), 0);
+				game.client_ingame[0]->lose = 0;
+				send(game.client_ingame[1]->socket, "win", sizeof("win"), 0);
+				game.client_ingame[1]->win = 0;
+
+			}//如果零号玩家胜利或一号玩家认输,向双方发送对应消息
+			else if (game.client_ingame[0] != NULL && game.client_ingame[1] != NULL && (game.client_ingame[0]->win || game.client_ingame[1]->lose)) {
+				send(game.client_ingame[1]->socket, "lose", sizeof("lose"), 0);
+				game.client_ingame[0]->win = 0;
+				send(game.client_ingame[0]->socket, "win", sizeof("win"), 0);
+				game.client_ingame[1]->lose = 0;
 			}
 		}
 	}
