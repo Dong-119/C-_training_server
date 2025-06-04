@@ -159,7 +159,7 @@ ready:
 				return 0;
 			}
 			else if(strcmp(buffer, "ready") == 0) {
-				client_login.ready = 1;
+				client_login.ready=!client_login.ready;
 			}
 			else if (strcmp(buffer, "win") == 0) {
 				client_login.win = 1;
