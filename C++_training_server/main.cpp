@@ -35,7 +35,6 @@ public:
 };
 
 vector<game> games;
-int gameschanged = 0;//当改变games大小时改为1，停止遍历并改为0
 
 //断开连接并将战局内存在的另一个人设置为player1，如果没有删除战局
 void player_quit(SOCKET client_socket) {
@@ -56,7 +55,6 @@ void player_quit(SOCKET client_socket) {
 				if (games[games_indx].client_ingame[0] == NULL && games[games_indx].client_ingame[1] == NULL) {
 					//删除战局
 					games.erase(games.begin() + games_indx);
-					gameschanged = 1;
 					break;
 				}//若战局内有玩家
 				else {
